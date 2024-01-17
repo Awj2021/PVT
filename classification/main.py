@@ -188,10 +188,10 @@ def main(args):
     #     raise NotImplementedError("Finetuning with distillation not yet supported")
 
     device = torch.device(args.device)
-    if not os.path.exists(os.path.join(args.tensorboard_dir, args.config)):
-        os.makedirs(os.path.join(args.tensorboard_dir, args.config))
+    if not os.path.exists(os.path.join(args.tensorboard_dir, os.path.basename(args.output_dir))):
+        os.makedirs(os.path.join(args.tensorboard_dir, os.path.basename(args.output_dir)))
 
-    writer = SummaryWriter(log_dir=os.path.join(args.tensorboard_dir, args.config))  # same dir of checkpoints.
+    writer = SummaryWriter(log_dir=os.path.join(args.tensorboard_dir, os.path.basename(args.output_dir)))  # same dir of checkpoints.
 
     # fix the seed for reproducibility
     seed = args.seed + utils.get_rank()
