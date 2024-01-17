@@ -94,12 +94,11 @@ def build_dataset(is_train, args):
 
     return dataset, nb_classes
 
+
 def build_transform_v2(is_train, args):
     resize_im = args.input_size > 32
     t = []
     if is_train:
-        # t.append(transforms.Resize(input_size, input_size))
-        # t.append(transforms.HorizontalFlip(p=0.5))
 
         t.append(transforms.Resize((args.input_size, args.input_size)))
         t.append(transforms.RandomHorizontalFlip())

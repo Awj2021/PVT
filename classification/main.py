@@ -2,6 +2,8 @@
 # All rights reserved.
 import argparse
 import datetime
+import os.path
+
 import numpy as np
 import time
 import torch
@@ -18,7 +20,7 @@ from timm.optim import create_optimizer
 from timm.utils import NativeScaler, get_state_dict, ModelEma
 
 from datasets import build_dataset
-from engine import train_one_epoch, evaluate
+from engine import train_one_epoch, evaluate, evaluate_train
 from losses import DistillationLoss
 from samplers import RASampler
 # import models
@@ -27,6 +29,7 @@ import pvt_v2
 import utils
 import collections
 import ipdb
+from torch.utils.tensorboard import SummaryWriter
 
 
 def get_args_parser():
@@ -172,6 +175,8 @@ def get_args_parser():
     parser.add_argument('--world_size', default=1, type=int,
                         help='number of distributed processes')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
+    parser.add_argument('--tensorboard_dir', type=str,
+                            default='/vol/research/wenjieProject/repos/PVT/classification/vis_tensorboard/')
     return parser
 
 
@@ -183,6 +188,10 @@ def main(args):
     #     raise NotImplementedError("Finetuning with distillation not yet supported")
 
     device = torch.device(args.device)
+    if not os.path.exists(os.path.join(args.tensorboard_dir, args.config)):
+        os.makedirs(os.path.join(args.tensorboard_dir, args.config))
+
+    writer = SummaryWriter(log_dir=os.path.join(args.tensorboard_dir, args.config))  # same dir of checkpoints.
 
     # fix the seed for reproducibility
     seed = args.seed + utils.get_rank()
@@ -404,7 +413,16 @@ def main(args):
                 }, checkpoint_path)
 
         test_stats = evaluate(data_loader_val, model, device, args)
+        train_eval_stats = evaluate_train(data_loader_train, model, device, args)
+
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
+        print(f"Accuracy of the network on the {len(dataset_val)} train images: {train_eval_stats['acc1']:.1f}%")
+
+        writer.add_scalar('Training Accuracy', train_eval_stats['acc1'], epoch + 1)
+        writer.add_scalar('Training Loss', train_stats['loss'], epoch + 1)
+        writer.add_scalar('Testing Accuracy', test_stats['acc1'], epoch + 1)
+        writer.add_scalar('Testing Loss', test_stats['loss'], epoch + 1)
+
         max_accuracy = max(max_accuracy, test_stats["acc1"])
         print(f'Max accuracy: {max_accuracy:.2f}%')
 
@@ -416,7 +434,7 @@ def main(args):
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
-
+    writer.close()
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
@@ -429,4 +447,5 @@ if __name__ == '__main__':
     args = utils.update_from_config(args)  # args.config.
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+
     main(args)
