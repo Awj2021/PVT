@@ -9,6 +9,7 @@ from torchvision.datasets.folder import ImageFolder, default_loader
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.data import create_transform
 from mcloader import ClassificationDataset
+from cyloader import Chaoyang 
 
 
 class INatDataset(ImageFolder):
@@ -58,8 +59,11 @@ def build_dataset(is_train, args):
     transform = build_transform(is_train, args)
 
     if args.data_set == 'CIFAR':
-        dataset = datasets.CIFAR100(args.data_path, train=is_train, transform=transform)
+        dataset = datasets.CIFAR100(args.data_path, train=is_train, transform=transform, download=True)
         nb_classes = 100
+    elif args.data_set == 'CIFAR10':
+        dataset = datasets.CIFAR10(args.data_path, train=is_train, transform=transform, download=True)
+        nb_classes = 10
     elif args.data_set == 'IMNET':
         if not args.use_mcloader:
             root = os.path.join(args.data_path, 'train' if is_train else 'val')
@@ -78,8 +82,34 @@ def build_dataset(is_train, args):
         dataset = INatDataset(args.data_path, train=is_train, year=2019,
                               category=args.inat_category, transform=transform)
         nb_classes = dataset.nb_classes
+    elif args.data_set == 'Chaoyang':
+        # root = os.path.join(args.data_path, 'train' if is_train else 'val')
+        # dataset = datasets.ImageFolder(root, transform=transform)
+        # nb_classes = 4
+        transform = build_transform_v2(is_train, args)
+        dataset = Chaoyang(root=args.data_path, transform=transform, is_train=is_train)
+        nb_classes = 4
+    else:
+        raise ValueError('Please Check the right dataset for training!')
 
     return dataset, nb_classes
+
+def build_transform_v2(is_train, args):
+    resize_im = args.input_size > 32
+    t = []
+    if is_train:
+        # t.append(transforms.Resize(input_size, input_size))
+        # t.append(transforms.HorizontalFlip(p=0.5))
+
+        t.append(transforms.Resize((args.input_size, args.input_size)))
+        t.append(transforms.RandomHorizontalFlip())
+        t.append(transforms.ColorJitter(contrast=0.5))
+    
+    if resize_im:
+        t.append(transforms.Resize((args.input_size, args.input_size)))
+    t.append(transforms.ToTensor())
+    t.append(transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD))
+    return transforms.Compose(t)
 
 
 def build_transform(is_train, args):

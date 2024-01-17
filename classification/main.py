@@ -26,21 +26,22 @@ import pvt
 import pvt_v2
 import utils
 import collections
+import ipdb
 
 
 def get_args_parser():
     parser = argparse.ArgumentParser('PVT training and evaluation script', add_help=False)
     parser.add_argument('--fp32-resume', action='store_true', default=False)
-    parser.add_argument('--batch-size', default=128, type=int)
-    parser.add_argument('--epochs', default=300, type=int)
+    parser.add_argument('--batch-size', default=16, type=int)
+    parser.add_argument('--epochs', default=100, type=int)
     parser.add_argument('--config', required=True, type=str, help='config')
 
     # Model parameters
     parser.add_argument('--model', default='pvt_small', type=str, metavar='MODEL',
                         help='Name of model to train')
-    parser.add_argument('--input-size', default=224, type=int, help='images input size')
+    parser.add_argument('--input-size', default=384, type=int, help='images input size')
 
-    parser.add_argument('--drop', type=float, default=0.0, metavar='PCT',
+    parser.add_argument('--drop', type=float, default=0.5, metavar='PCT',
                         help='Dropout rate (default: 0.)')
     parser.add_argument('--drop-path', type=float, default=0.1, metavar='PCT',
                         help='Drop path rate (default: 0.1)')
@@ -138,12 +139,12 @@ def get_args_parser():
     # parser.add_argument('--distillation-tau', default=1.0, type=float, help="")
 
     # * Finetuning params
-    parser.add_argument('--finetune', default='', help='finetune from checkpoint')
+    parser.add_argument('--finetune', default='./pvt_v2_b2.pth', help='finetune from checkpoint')
 
     # Dataset parameters
     parser.add_argument('--data-path', default='/datasets01/imagenet_full_size/061417/', type=str,
                         help='dataset path')
-    parser.add_argument('--data-set', default='IMNET', choices=['CIFAR', 'IMNET', 'INAT', 'INAT19'],
+    parser.add_argument('--data-set', default='CIFAR', choices=['CIFAR', 'IMNET', 'INAT', 'INAT19'],
                         type=str, help='Image Net dataset path')
     parser.add_argument('--use-mcloader', action='store_true', default=False, help='Use mcloader')
     parser.add_argument('--inat-category', default='name',
@@ -154,7 +155,7 @@ def get_args_parser():
                         help='path where to save, empty for no saving')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
-    parser.add_argument('--seed', default=0, type=int)
+    parser.add_argument('--seed', default=1024, type=int)
     parser.add_argument('--resume', default='', help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
@@ -175,6 +176,7 @@ def get_args_parser():
 
 
 def main(args):
+    # TODO: check the definition of the init_distributed_mode function.
     utils.init_distributed_mode(args)
     print(args)
     # if args.distillation_type != 'none' and args.finetune and not args.eval:
@@ -193,7 +195,8 @@ def main(args):
     dataset_train, args.nb_classes = build_dataset(is_train=True, args=args)
     dataset_val, _ = build_dataset(is_train=False, args=args)
 
-    if True:  # args.distributed:
+    # if True:  # args.distributed:
+    if args.distributed:  # We set the args.distributed = false since limitation of dataset and GPUs.
         num_tasks = utils.get_world_size()
         global_rank = utils.get_rank()
         if args.repeated_aug:
@@ -222,7 +225,7 @@ def main(args):
     else:
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
-
+    # TODO: Change the batch_size and the number_workers.
     data_loader_train = torch.utils.data.DataLoader(
         dataset_train, sampler=sampler_train,
         batch_size=args.batch_size,
@@ -233,7 +236,7 @@ def main(args):
 
     data_loader_val = torch.utils.data.DataLoader(
         dataset_val, sampler=sampler_val,
-        batch_size=int(1.5 * args.batch_size),
+        batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=False
@@ -301,7 +304,7 @@ def main(args):
     loss_scaler = NativeScaler()
     lr_scheduler, _ = create_scheduler(args, optimizer)
 
-    criterion = LabelSmoothingCrossEntropy()
+    criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing)
 
     if args.mixup > 0.:
         # smoothing is handled with mixup label transform
@@ -335,6 +338,7 @@ def main(args):
     # criterion = DistillationLoss(
     #     criterion, teacher_model, args.distillation_type, args.distillation_alpha, args.distillation_tau
     # )
+    # FIXME: Why using this function? Distillationloss?
     criterion = DistillationLoss(
         criterion, None, 'none', 0, 0
     )
@@ -361,7 +365,7 @@ def main(args):
                 loss_scaler.load_state_dict(checkpoint['scaler'])
 
     if args.eval:
-        test_stats = evaluate(data_loader_val, model, device)
+        test_stats = evaluate(data_loader_val, model, device, args)
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
         return
 
@@ -399,7 +403,7 @@ def main(args):
                     'args': args,
                 }, checkpoint_path)
 
-        test_stats = evaluate(data_loader_val, model, device)
+        test_stats = evaluate(data_loader_val, model, device, args)
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
         max_accuracy = max(max_accuracy, test_stats["acc1"])
         print(f'Max accuracy: {max_accuracy:.2f}%')
@@ -421,7 +425,8 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('DeiT training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
-    args = utils.update_from_config(args)
+    # Use the config file.
+    args = utils.update_from_config(args)  # args.config.
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     main(args)
