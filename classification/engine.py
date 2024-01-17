@@ -110,3 +110,52 @@ def evaluate(data_loader, model, device, args):
             top1=metric_logger.acc1, losses=metric_logger.loss))
 
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+
+
+@torch.no_grad()
+def evaluate_train(data_loader, model, device, args):
+    """Record the train dataset matrics when training. The reason for new class is that the training process uses
+    Mixup Setting for data Augmentation.
+    """
+    criterion = torch.nn.CrossEntropyLoss()
+
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = 'Test with Train Dataset:'
+
+    # switch to evaluation mode
+    model.eval()
+
+    for images, target in metric_logger.log_every(data_loader, 10, header):
+        images = images.to(device, non_blocking=True)
+        target = target.to(device, non_blocking=True)
+
+        # compute output
+        with torch.cuda.amp.autocast():
+            output = model(images)
+            loss = criterion(output, target)
+        # TODO: Make sure that the number of classes is larger than 5.
+        if args.nb_classes > 5:
+            acc1, acc5 = accuracy(output, target, topk=(1, 5))
+
+            batch_size = images.shape[0]
+            metric_logger.update(loss=loss.item())
+            metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
+            metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
+        else:
+            acc1 = accuracy(output, target, topk=(1,))
+            # ipdb.set_trace()
+            batch_size = images.shape[0]  # why batch_size = 3?
+            metric_logger.update(loss=loss.item())
+            metric_logger.meters['acc1'].update(acc1[0].item(), n=batch_size)
+    # gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+    if args.nb_classes > 5:
+        print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f}'.format(
+            top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss))
+    else:
+        print('* Acc@1 {top1.global_avg:.3f} loss {losses.global_avg:.3f}'.format(
+            top1=metric_logger.acc1, losses=metric_logger.loss))
+
+    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+
+
